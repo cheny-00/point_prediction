@@ -12,6 +12,9 @@
 各种工具
 #### data
 数据转换 & 数据i/o
+data format:
+(batch, 10, 3)
+
 
 #### trainer
 训练的类

@@ -8,7 +8,7 @@ from functools import partial
 class Trainer:
 
     def __init__(self,
-                 epoches,
+                 epochs,
                  train_iter,
                  dev_iter,
                  logger,
@@ -16,7 +16,7 @@ class Trainer:
                  log_interval,
                  optim):
 
-        self.epoches = epoches
+        self.epochs = epochs
         self.train_iter = train_iter
         self.dev_iter = dev_iter
         self.logger = logger
@@ -36,7 +36,7 @@ class Trainer:
         train_loss = train_step = 0
         log_interval = self.log_interval
 
-        for i in range(self.epoches):
+        for i in range(self.epochs):
             tqdm_train_iter = self.train_iter
             log_start_time = time()
 
@@ -70,11 +70,10 @@ class Trainer:
 
 class SamsungModelTrainer(Trainer):
 
-    @classmethod
-    def train_process(cls, data, **kwargs):
+    def train_process(self, data, **kwargs):
 
         self.optim.zero_grad()
-        loss = cls.model(data)
+        loss = self.model(data)
         return loss
 
     def eval_model(self,
