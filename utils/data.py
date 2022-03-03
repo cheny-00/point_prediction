@@ -71,7 +71,7 @@ class SamsungSample:
             self.y[i] = myY + self.y[originIndex]
 
 
-class SamsungDataset(Dataset):
+class LSTMDataset(Dataset):
 
     def __init__(self,
                  data_path,

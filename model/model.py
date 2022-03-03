@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
 
-class SamsungPointPredict(nn.Module):
-    def __init__(self,
-                 enc_hidden_size,
-                 dec_hidden_size,
-                 drop_prob):
+class LSTMPointPredict(nn.Module):
+    def __init__(self, enc_hidden_size, dec_hidden_size, drop_prob, device):
 
+        super(LSTMPointPredict).__init__()
+
+        self.device = device
         self.enc_hidden_size = enc_hidden_size
         self.dec_hidden_size = dec_hidden_size
 
@@ -29,12 +29,12 @@ class SamsungPointPredict(nn.Module):
 
         # input data shape should be (batch_size, 10, 3), same as their paper
 
-        out, hc = self.encoder(inp)
+        out, hc = self.encoder(inp['input'].to(self.device))
         out = self.drop(out)
         out, _ = self.decoder(out) # add hc ?
         out = self.drop(out)
         logits = self.full_connected(out)
-        loss = self.crit(logits, inp['targets'])
+        loss = self.crit(logits, inp['label'].to(self.device))
 
-        return loss
+        return logits, loss
 

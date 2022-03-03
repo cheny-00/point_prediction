@@ -14,6 +14,7 @@ class Trainer:
                  logger,
                  batch_size,
                  log_interval,
+                 eval_interval,
                  optim):
 
         self.epochs = epochs
@@ -23,6 +24,7 @@ class Trainer:
         self.batch_size = batch_size
         self.log_interval = log_interval
         self.optim = optim
+        self.eval_interval = eval_interval
 
 
 
@@ -30,12 +32,12 @@ class Trainer:
               model,
               crit):
 
-        device = next(model.parameters()).device
         train_process = partial(self.train_process, crit=crit)
 
         train_loss = train_step = 0
-        log_interval = self.log_interval
+        log_interval, eval_interval = self.log_interval, self.eval_interval
 
+        model.train()
         for i in range(self.epochs):
             tqdm_train_iter = self.train_iter
             log_start_time = time()
@@ -52,13 +54,14 @@ class Trainer:
 
                     cur_loss = train_loss / log_interval
                     elapsed = time() - log_start_time
-                    log_str = f"| epoch {i} steps {train_step} | {num_batch} batchs | lr {self.optim.param_groups[0]['lr']:.3g} " \
+                    log_str = f"| epoch {i} steps {train_step} | {num_batch} batches | lr {self.optim.param_groups[0]['lr']:.3g} " \
                               f"| {elapsed * 1000 / log_interval:5.2f} ms/batch | loss {cur_loss:5.6f}"
                     self.logger(log_str, print_=False)
                     tqdm_train_iter.set_description(log_str, refresh=False)
                     train_loss = 0
                     log_start_time = time()
-
+            if (i + 1) % eval_interval:
+                self.eval_model(model, train_step)
 
 
 
@@ -68,17 +71,31 @@ class Trainer:
         return NotImplementedError()
 
 
-class SamsungModelTrainer(Trainer):
+class LSTMModelTrainer(Trainer):
 
     def train_process(self, data, **kwargs):
 
         self.optim.zero_grad()
-        loss = self.model(data)
+        _, loss = self.model(data)
         return loss
 
     def eval_model(self,
-                   ):
-        pass
+                   model,
+                   train_step):
+        model.eval()
+        tqdm_dev_iter = self.dev_iter
+        total_loss, eval_start_time = 0, time()
+
+        with torch.no_grad():
+            for data in enumerate(tqdm_dev_iter):
+                _, loss = model(data)
 
 
+        log_str  = f"| Eval step at {train_step} | speed time: {time() - eval_start_time} |" \
+                   f"| average valid loss: {total_loss / len(tqdm_dev_iter)} | "
+
+        self.logger('-' * 100 + "\n" + log_str + "\n" + '-' * 100, print_=False)
+        tqdm_dev_iter.set_description(log_str)
+
+        model.train()
 
