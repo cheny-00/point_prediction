@@ -2,13 +2,12 @@ import os
 import time
 
 import torch
-import torch.nn as nn
+from tqdm import tqdm
 from torch.utils.data import DataLoader
-
 
 from load_args import load_args
 from utils.data import LSTMDataset
-from utils.utils import create_exp_dir
+from utils.utils import create_exp_dir, randn_sampler
 from model.model import LSTMPointPredict
 from utils.trainer import LSTMModelTrainer
 
@@ -32,16 +31,32 @@ if torch.cuda.is_available() and not args.cuda:
     print("detected gpu is available but not using")
 
 #############################################################################################
-##  loading dataset
+##  load dataset
 #############################################################################################
+val_split = [0.1, 0.2]
 
 
-train_data = LSTMDataset(data_path=args.data_path,
+dataset = LSTMDataset(data_path=args.data_path,
                          offset=args.offset)
-train_dataloader = DataLoader(train_data,
-                              batch_size=args.batch_size,
-                              drop_last=False,
-                              shuffle=True)
+dev_sampler, eval_sampler, train_sampler = randn_sampler(val_split,
+                                                         len(dataset),
+                                                         shuffle_dataset=True,
+                                                         random_seed=args.seed)
+
+
+
+train_iter = DataLoader(dataset,
+                        batch_size=args.batch_size,
+                        drop_last=False,
+                        shuffle=True,
+                        sampler=train_sampler)
+dev_iter = DataLoader(dataset,
+                      batch_size=args.eval_batch_size,
+                      sampler=dev_sampler)
+eval_iter = DataLoader(dataset,
+                       batch_size=args.eval_batch_size,
+                       sampler=eval_sampler)
+
 
 model = LSTMPointPredict(enc_hidden_size=512,
                          dec_hidden_size=256,
@@ -57,8 +72,8 @@ optim = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 trainer_params = {
     "epochs": args.epochs,
-    "train_iter": train_dataloader,
-    "dev_iter": None,
+    "train_iter": train_iter,
+    "dev_iter": dev_iter,
     "logger": logging,
     "batch_size": args.batch_size,
     "log_interval": args.log_interval,
@@ -71,16 +86,38 @@ model_trainer = LSTMModelTrainer(**trainer_params)
 model_trainer.train(model, None)
 
 #############################################################################################
+##  evaluate model
+#############################################################################################
+
+model.eval()
+tqdm_eval_iter = tqdm(eval_iter)
+total_eval_score = 0
+eval_start_time = time.time()
+with torch.no_grad():
+    for data in enumerate(tqdm_eval_iter):
+        _, eval_score = model(data)
+        total_eval_score += eval_score
+
+eval_avg_score = total_eval_score / len(tqdm_eval_iter)
+eval_log_str  = f"| Final Eval | speed time: {time.time() - eval_start_time} |" \
+                f"| average eval loss: {eval_avg_score} | "
+
+logging('-' * 100 + "\n" + eval_log_str + "\n" + '-' * 100, print_=True)
+
+
+#############################################################################################
 ##  save model
 #############################################################################################
 save_params = {
     "state_dict": model.state_dict(),
     "optimizer": optim.state_dict(),
+    "average_eval_score": eval_avg_score
 }
 save_path = os.path.join(work_dir, "save", "LSTM", start_time)
 
 torch.save(save_params,
            save_path)
+
 
 
 

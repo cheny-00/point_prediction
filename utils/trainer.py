@@ -38,6 +38,7 @@ class Trainer:
         log_interval, eval_interval = self.log_interval, self.eval_interval
 
         model.train()
+        best_score = float('inf')
         for i in range(self.epochs):
             tqdm_train_iter = self.train_iter
             log_start_time = time()
@@ -61,7 +62,8 @@ class Trainer:
                     train_loss = 0
                     log_start_time = time()
             if (i + 1) % eval_interval:
-                self.eval_model(model, train_step)
+                valid_score = self.eval_model(model, train_step) # TODO should we add early stop?
+
 
 
 
@@ -83,19 +85,21 @@ class LSTMModelTrainer(Trainer):
                    model,
                    train_step):
         model.eval()
-        tqdm_dev_iter = self.dev_iter
-        total_loss, eval_start_time = 0, time()
+        tqdm_dev_iter = tqdm(self.dev_iter)
+        dev_total_loss, dev_start_time = 0, time()
 
         with torch.no_grad():
             for data in enumerate(tqdm_dev_iter):
-                _, loss = model(data)
+                _, dev_loss = model(data)
+                dev_total_loss += dev_loss
 
 
-        log_str  = f"| Eval step at {train_step} | speed time: {time() - eval_start_time} |" \
-                   f"| average valid loss: {total_loss / len(tqdm_dev_iter)} | "
+        log_str  = f"| Eval step at {train_step} | speed time: {time() - dev_start_time} |" \
+                   f"| average valid loss: {dev_total_loss / len(tqdm_dev_iter)} | "
 
         self.logger('-' * 100 + "\n" + log_str + "\n" + '-' * 100, print_=False)
         tqdm_dev_iter.set_description(log_str)
 
         model.train()
+        return dev_total_loss / len(tqdm_dev_iter)
 

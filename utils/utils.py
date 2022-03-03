@@ -2,6 +2,8 @@
 import functools
 import os, shutil
 
+import numpy as np
+from torch.utils.data.sampler import SubsetRandomSampler
 
 
 def logging(s, log_path, print_=True, log_=True):
@@ -32,3 +34,26 @@ def create_exp_dir(dir_path, scripts_to_save=None, debug=False):
             shutil.copyfile(script, dst_file)
 
     return get_logger(log_path=os.path.join(dir_path, 'log.txt'))
+
+def randn_sampler(split_rate,
+                  n_dataset,
+                  shuffle_dataset,
+                  random_seed):
+    # refer to https://stackoverflow.com/questions/50544730/how-do-i-split-a-custom-dataset-into-training-and-test-datasets/50544887#50544887
+    indices = list(range(n_dataset))
+    if type(split_rate) == int:
+        split_rate = list(split_rate)
+    split_point = [0]
+    cum_rate = 0
+    for rate in split_rate:
+        cum_rate += rate
+        split_point.append(int(np.floor(cum_rate * n_dataset)))
+    split_point.append(n_dataset)
+    if shuffle_dataset:
+        np.random.seed(random_seed)
+        np.random.shuffle(indices)
+    samplers = list()
+    for i in range(len(split_point) - 1):
+        samplers.append(SubsetRandomSampler(indices[split_point[i]:split_point[i + 1]]))
+
+    return samplers if len(samplers) > 1 else samplers[0]
