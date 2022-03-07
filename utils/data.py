@@ -1,16 +1,15 @@
 
 import os
 import math
+import json
 
+import pandas as pd
 from torch.utils.data.dataset import Dataset
 
 
 
 
-
-
-
-class SamsungSample:
+class LSTMSample:
     def __init__(self, events, sequence_counter, count, jump):
         self.angle = 0
 
@@ -84,8 +83,9 @@ class LSTMDataset(Dataset):
     def __getitem__(self, idx):
         return self.get_item(self.data[idx], self.target[idx])
 
-    def set_data(self):
-        raw_sample = self.load_dataset()
+    def get_data(self):
+        events = self.read_data(self.data_path)
+        raw_sample = self.load_dataset(events, 11 + self.offset)
         self.data, self.target = self.build_samples(raw_sample, self.offset)
 
     @staticmethod
@@ -95,12 +95,6 @@ class LSTMDataset(Dataset):
         features['label'] = target
         return features
 
-
-    @staticmethod
-    def read_data():
-        # wait for data format
-        # return [(x, y), angle(no need), time, action]
-        return raw_data
 
     @staticmethod
     def build_samples(raw_samples, offset):
@@ -129,7 +123,7 @@ class LSTMDataset(Dataset):
                     jump = j
                     break
             if jump - i > 11:
-                sample = SamsungSample(raw_data, i, seq_len, jump)
+                sample = LSTMSample(raw_data, i, seq_len, jump)
                 sample.angle = sample.getAngle(9, 10) + math.radians(45)
                 sample.rotate(sample.angle, 10)
 
@@ -142,3 +136,42 @@ class LSTMDataset(Dataset):
                 if same_time == 0:
                     samples.append(sample)
         return samples
+
+    @staticmethod
+    def read_data(data_path):
+        # return [(x, y), angle(no need), time, action]
+        header_name =  ["x", "y", "pressure", "x_tilt", "y_tilt", "total_tilt", "orientation", "pitch angle", "scroll", "pen_size", "timestamp"]
+        raw_data = pd.read_csv(data_path,
+                               sep=" ",
+                               header=len(header_name),
+                               names=header_name)
+        split_points = [-1] + raw_data[raw_data.y.isna()].x.index.tolist()
+        events = list()
+        for i in range(len(split_points) - 1):
+            start, end = split_points[i] + 1, split_points[i + 1]
+            for idx, p in raw_data.iloc[start:end].iterrows():
+                action = 0 if idx == start else 1 if idx == end else 2
+                events.append([(p.x, p.y), p.total_tilt, p.timestamp, action])
+        return events
+
+
+
+def load_json_data(data_path):
+    data = json.load(open(data_path, "r"))
+    events = list()
+    for s in data:
+        points = s['mPoints']
+        start, end = 0, len(points)
+        for pos, point in enumerate(points):
+            if not "time" in point.keys():
+                print("Not found timestamp attribute")
+            action = 0 if pos == start else 1 if pos == end else 2
+            events.append([(point['x'], point['y']), 0, point['time'],action])
+
+    return events
+
+
+
+
+
+

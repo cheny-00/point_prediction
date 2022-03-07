@@ -67,6 +67,16 @@ model.to(device)
 optim = torch.optim.Adam(model.parameters(), lr=args.lr)
 
 #############################################################################################
+##  loading model
+############################################################################################
+if args.restart:
+    checkpoints = torch.load(args.ckpt_path)
+    model.load_state_dict(checkpoints['model_state_dict'])
+    optim.load_state_dict(checkpoints['optim_state_dict'])
+    best_score = checkpoints['score']
+
+
+#############################################################################################
 ##  train model
 #############################################################################################
 
@@ -109,9 +119,9 @@ logging('-' * 100 + "\n" + eval_log_str + "\n" + '-' * 100, print_=True)
 ##  save model
 #############################################################################################
 save_params = {
-    "state_dict": model.state_dict(),
-    "optimizer": optim.state_dict(),
-    "average_eval_score": eval_avg_score
+    "model_state_dict": model.state_dict(),
+    "optim_state_dict": optim.state_dict(),
+    "score": eval_avg_score
 }
 save_path = os.path.join(work_dir, "save", "LSTM", start_time)
 
