@@ -18,18 +18,21 @@ from utils.trainer import LSTMModelTrainer
 args = load_args()
 
 start_time = time.strftime('%Y%m%d-%H%M%S')
-work_dir = os.path.join(os.path.abspath(os.path.join(os.getcwd(), "..")), 'logs')
-log_dir = os.path.join(work_dir, args.proj_name, start_time)
+work_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
+log_dir = os.path.join(work_dir, 'logs', args.proj_name, start_time)
 working_files  = ["run_train.py", "load_args.py", "model/model.py", "utils/trainer.py"]
 working_files = list(map(lambda x: os.path.join(work_dir, x), working_files))
 logging = create_exp_dir(log_dir,
                          scripts_to_save=working_files,
                          debug=args.debug)
 
-device = torch.device('cuda' if args.cuda else 'cpu')
+device = torch.device(f'cuda:{args.rank}' if args.cuda else 'cpu')
 if torch.cuda.is_available() and not args.cuda:
-    print("detected gpu is available but not using")
+    print("detected gpu is available but not used")
 
+save_path = os.path.join(work_dir, "save", "LSTM", start_time)
+if not os.path.exists(save_path):
+    os.makedirs(save_path)
 #############################################################################################
 ##  load dataset
 #############################################################################################
@@ -38,6 +41,10 @@ val_split = [0.1, 0.2]
 
 dataset = LSTMDataset(data_path=args.data_path,
                          offset=args.offset)
+
+dataset.get_data(args.load_dataset_path)
+if not os.path.exists(args.load_dataset_path):
+    torch.save(dataset, args.data)
 dev_sampler, eval_sampler, train_sampler = randn_sampler(val_split,
                                                          len(dataset),
                                                          shuffle_dataset=True,
@@ -48,7 +55,6 @@ dev_sampler, eval_sampler, train_sampler = randn_sampler(val_split,
 train_iter = DataLoader(dataset,
                         batch_size=args.batch_size,
                         drop_last=False,
-                        shuffle=True,
                         sampler=train_sampler)
 dev_iter = DataLoader(dataset,
                       batch_size=args.eval_batch_size,
@@ -61,7 +67,8 @@ eval_iter = DataLoader(dataset,
 model = LSTMPointPredict(enc_hidden_size=512,
                          dec_hidden_size=256,
                          drop_prob=args.dropout,
-                         device=device)
+                         device=device,
+                         is_qat=args.qat)
 model.to(device)
 
 optim = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -74,6 +81,22 @@ if args.restart:
     model.load_state_dict(checkpoints['model_state_dict'])
     optim.load_state_dict(checkpoints['optim_state_dict'])
     best_score = checkpoints['score']
+
+if args.fp8:
+    model = torch.quantization.quantize_dynamic(model,
+                                                {torch.nn.LSTM,
+                                                 torch.nn.Linear},
+                                                dtype=torch.quint8)
+
+
+if args.qat:
+    model.train()
+    model.qconfig = torch.quantization.get_default_qat_qconfig('fbgemm')
+    model_fp32_fused = torch.quantization.fuse_modules(model,
+                                                       [['encoder', 'decoder', 'full_connected']])
+
+    model = torch.quantization.prepare_qat(model_fp32_fused)
+
 
 
 #############################################################################################
@@ -88,7 +111,9 @@ trainer_params = {
     "batch_size": args.batch_size,
     "log_interval": args.log_interval,
     "eval_interval": args.eval_interval,
-    "optim": optim
+    "optim": optim,
+    "save_path": save_path,
+    "is_qat": args.qat
 }
 
 model_trainer = LSTMModelTrainer(**trainer_params)
@@ -104,7 +129,7 @@ tqdm_eval_iter = tqdm(eval_iter)
 total_eval_score = 0
 eval_start_time = time.time()
 with torch.no_grad():
-    for data in enumerate(tqdm_eval_iter):
+    for data in tqdm_eval_iter:
         _, eval_score = model(data)
         total_eval_score += eval_score
 
@@ -118,15 +143,17 @@ logging('-' * 100 + "\n" + eval_log_str + "\n" + '-' * 100, print_=True)
 #############################################################################################
 ##  save model
 #############################################################################################
+
+if args.qat:
+    model = torch.quantization.convert(model)
+
 save_params = {
     "model_state_dict": model.state_dict(),
     "optim_state_dict": optim.state_dict(),
     "score": eval_avg_score
 }
-save_path = os.path.join(work_dir, "save", "LSTM", start_time)
-
 torch.save(save_params,
-           save_path)
+           os.path.join(save_path, "LSTM.pt"))
 
 
 

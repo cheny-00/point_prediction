@@ -3,11 +3,14 @@ import os
 import math
 import json
 
+import torch
+from tqdm import tqdm
 import pandas as pd
+import pickle
 from torch.utils.data.dataset import Dataset
 
 
-
+n_prev = 40
 
 class LSTMSample:
     def __init__(self, events, sequence_counter, count, jump):
@@ -22,14 +25,14 @@ class LSTMSample:
                 self.y.append(events[jump - 1][1])
 
                 if i == sequence_counter:
-                    self.time.append(17)
+                    self.time.append(4)
                 else:
                     self.time.append(events[jump - 1][3] - events[jump - 2][3])
             else:
                 self.x.append(events[i][0])
                 self.y.append(events[i][1])
                 if i == sequence_counter:
-                    self.time.append(17)
+                    self.time.append(4)
                 else:
                     self.time.append(events[i][3] - events[i - 1][3])
 
@@ -73,6 +76,7 @@ class LSTMDataset(Dataset):
         self.data_path = data_path
         self.data = list()
         self.target = list()
+        self.dt = list()
         self.offset = offset
 
 
@@ -81,36 +85,40 @@ class LSTMDataset(Dataset):
 
 
     def __getitem__(self, idx):
-        return self.get_item(self.data[idx], self.target[idx])
+        return self.get_item(self.data[idx], self.target[idx], self.dt[idx])
 
     def get_data(self):
         events = self.read_data(self.data_path)
-        raw_sample = self.load_dataset(events, 11 + self.offset)
-        self.data, self.target = self.build_samples(raw_sample, self.offset)
+        raw_sample = self.load_dataset(events, n_prev + 1 + self.offset)
+        self.data, self.target, self.dt = self.build_samples(raw_sample, self.offset)
 
     @staticmethod
-    def get_item(data, target):
+    def get_item(data, target, dt):
         features = dict()
-        features['input'] = data
-        features['label'] = target
+        features['input'] = torch.tensor(data, dtype=torch.float32)
+        features['label'] = torch.tensor(target, dtype=torch.float32)
+        features['dt'] = torch.tensor(dt, dtype=torch.float32)
+
         return features
 
 
     @staticmethod
     def build_samples(raw_samples, offset):
-        data, target = list(), list()
+        data, target, dt = list(), list(), list()
 
         for sample in raw_samples:
             line = list()
-            for i in range(10):
+            for i in range(n_prev):
                 line.append([sample.x[i], sample.y[i], sample.time[i + offset]])
             data.append(line)
-            x = y = 0
+            x = y = t = 0
             for i in range(offset):
-                x += sample.x[10 + i]
-                y += sample.y[10 + i]
+                x += sample.x[n_prev + i]
+                y += sample.y[n_prev + i]
+                t += sample.t[n_prev + i]
             target.append([x, y])
-        return data, target
+            dt.append(t)
+        return data, target, dt
 
     @staticmethod
     def load_dataset(raw_data, seq_len):
@@ -122,10 +130,10 @@ class LSTMDataset(Dataset):
                 if j >= len(raw_data) or raw_data[j][4] != 2:
                     jump = j
                     break
-            if jump - i > 11:
+            if jump - i > n_prev + 1:
                 sample = LSTMSample(raw_data, i, seq_len, jump)
-                sample.angle = sample.getAngle(9, 10) + math.radians(45)
-                sample.rotate(sample.angle, 10)
+                sample.angle = sample.getAngle(n_prev - 1, n_prev) + math.radians(45)
+                sample.rotate(sample.angle, n_prev)
 
                 sample.derivate()
 
@@ -139,21 +147,24 @@ class LSTMDataset(Dataset):
 
     @staticmethod
     def read_data(data_path):
-        # return [(x, y), angle(no need), time, action]
-        header_name =  ["x", "y", "pressure", "x_tilt", "y_tilt", "total_tilt", "orientation", "pitch angle", "scroll", "pen_size", "timestamp"]
+        # return [x, y, angle(no need), time, action]
+        header_name =  ["x", "y", "pressure", "x_tilt", "y_tilt", "total_tilt", "orientation", "pitch_angle", "scroll",
+                        "pen_size", "pen_size_x", "pen_size_y", "pen_size_width", "pen_size_height" ,"timestamp"]
         raw_data = pd.read_csv(data_path,
                                sep=" ",
                                header=len(header_name),
                                names=header_name)
         split_points = [-1] + raw_data[raw_data.y.isna()].x.index.tolist()
+        split_points = [int(n) for n in split_points]
         events = list()
-        for i in range(len(split_points) - 1):
+        for i in tqdm(range(0, len(split_points) - 1, 2)):
             start, end = split_points[i] + 1, split_points[i + 1]
+            if i == 50:
+                break
             for idx, p in raw_data.iloc[start:end].iterrows():
-                action = 0 if idx == start else 1 if idx == end else 2
-                events.append([(p.x, p.y), p.total_tilt, p.timestamp, action])
+                action = 0 if idx == start else 1 if idx == end - 1 else 2
+                events.append([p.x, p.y, p.total_tilt, p.timestamp, action])
         return events
-
 
 
 def load_json_data(data_path):
@@ -166,12 +177,19 @@ def load_json_data(data_path):
             if not "time" in point.keys():
                 print("Not found timestamp attribute")
             action = 0 if pos == start else 1 if pos == end else 2
-            events.append([(point['x'], point['y']), 0, point['time'],action])
+            events.append([point['x'], point['y'], 0, point['time'],action])
 
     return events
 
+def save_dataset(data, path):
+    with open(path, 'wb') as f:
+        pickle.dump(data, f)
 
 
+def load_dataset(path):
+    with open(path, 'rb') as f:
+        data = pickle.load(f)
+    return data
 
 
 
