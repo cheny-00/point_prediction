@@ -15,10 +15,12 @@ n_prev = 40
 class LSTMSample:
     def __init__(self, events, sequence_counter, count, jump):
         self.angle = 0
+        self.avg_dt = 1000 / 240
 
         self.x = []
         self.y = []
         self.time = []
+
         for i in range(sequence_counter, sequence_counter + count):  # padding
             if i >= jump - 1:
                 self.x.append(events[jump - 1][0])
@@ -65,6 +67,17 @@ class LSTMSample:
                   (self.y[i] - self.y[originIndex]) * cs
             self.x[i] = myX + self.x[originIndex]
             self.y[i] = myY + self.y[originIndex]
+
+    def norm(self):
+        i = 1
+        new_x, new_y, new_t = [self.x[0]], [self.y[0]], [self.time[0]]
+        while i < len(self.x):
+            rate = self.avg_dt / self.time[i]
+            new_x.append(self.x[i - 1] + (self.x[i] - self.x[i - 1]) * rate)
+            new_y.append(self.y[i - 1] + (self.y[i] - self.y[i - 1]) * rate)
+            new_t.append(self.avg_dt)
+            i += 1
+        self.x, self.y, self.time = new_x, new_y, new_t
 
 
 class LSTMDataset(Dataset):
@@ -115,7 +128,7 @@ class LSTMDataset(Dataset):
             for i in range(offset):
                 x += sample.x[n_prev + i]
                 y += sample.y[n_prev + i]
-                t += sample.t[n_prev + i]
+                t += sample.time[n_prev + i]
             target.append([x, y])
             dt.append(t)
         return data, target, dt
@@ -142,6 +155,7 @@ class LSTMDataset(Dataset):
                     if sample.time[a] < 1:
                         same_time = 1
                 if same_time == 0:
+                    sample.norm()
                     samples.append(sample)
         return samples
 
@@ -159,8 +173,8 @@ class LSTMDataset(Dataset):
         events = list()
         for i in tqdm(range(0, len(split_points) - 1, 2)):
             start, end = split_points[i] + 1, split_points[i + 1]
-            if i == 50:
-                break
+            # if i == 50:
+            #    break
             for idx, p in raw_data.iloc[start:end].iterrows():
                 action = 0 if idx == start else 1 if idx == end - 1 else 2
                 events.append([p.x, p.y, p.total_tilt, p.timestamp, action])
@@ -190,6 +204,5 @@ def load_dataset(path):
     with open(path, 'rb') as f:
         data = pickle.load(f)
     return data
-
 
 

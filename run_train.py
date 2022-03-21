@@ -8,9 +8,8 @@ from torch.utils.data import DataLoader
 from load_args import load_args
 from utils.data import LSTMDataset
 from utils.utils import create_exp_dir, randn_sampler
-from model.model import LSTMPointPredict
 from utils.trainer import LSTMModelTrainer
-
+from model.model_table import *
 
 #############################################################################################
 ##  setting
@@ -20,7 +19,7 @@ args = load_args()
 start_time = time.strftime('%Y%m%d-%H%M%S')
 work_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
 log_dir = os.path.join(work_dir, 'logs', args.proj_name, start_time)
-working_files  = ["run_train.py", "load_args.py", "model/model.py", "utils/trainer.py"]
+working_files  = ["run_train.py", "load_args.py", f"model/{args.model_name}_model.py", "utils/trainer.py"]
 working_files = list(map(lambda x: os.path.join(work_dir, x), working_files))
 logging = create_exp_dir(log_dir,
                          scripts_to_save=working_files,
@@ -30,8 +29,9 @@ device = torch.device(f'cuda:{args.rank}' if args.cuda else 'cpu')
 if torch.cuda.is_available() and not args.cuda:
     print("detected gpu is available but not used")
 
+
 save_path = os.path.join(work_dir, "save", "LSTM", start_time)
-if not os.path.exists(save_path):
+if not os.path.exists(save_path) and not args.debug:
     os.makedirs(save_path)
 #############################################################################################
 ##  load dataset
@@ -42,9 +42,10 @@ val_split = [0.1, 0.2]
 dataset = LSTMDataset(data_path=args.data_path,
                          offset=args.offset)
 
-dataset.get_data(args.load_dataset_path)
-if not os.path.exists(args.load_dataset_path):
-    torch.save(dataset, args.data)
+dataset.get_data()
+#print(dataset.dt)
+#if not os.path.exists(args.load_dataset_path):
+#    torch.save(dataset, args.data)
 dev_sampler, eval_sampler, train_sampler = randn_sampler(val_split,
                                                          len(dataset),
                                                          shuffle_dataset=True,
@@ -63,12 +64,18 @@ eval_iter = DataLoader(dataset,
                        batch_size=args.eval_batch_size,
                        sampler=eval_sampler)
 
-
-model = LSTMPointPredict(enc_hidden_size=512,
-                         dec_hidden_size=256,
-                         drop_prob=args.dropout,
-                         device=device,
-                         is_qat=args.qat)
+model = models[args.model_name]
+model_params = { 
+    "enc_hs": 512,
+    "dec_hs": 256,
+    "enc_hidden_size": 512,
+    "dec_hidden_size": 256,
+    "drop_prob": args.dropout,
+    "device": device,
+    "is_qat": args.qat,
+    "offset": args.offset
+    }
+model = model(**model_params)
 model.to(device)
 
 optim = torch.optim.Adam(model.parameters(), lr=args.lr)

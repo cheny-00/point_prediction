@@ -81,6 +81,7 @@ class Trainer:
                     torch.save({"model_state_dict": model.state_dict()},
                                os.path.join(self.save_path, f"epoch_{(i+1)}_{valid_score:5.3f}.pt"))
                     model.to(device)
+                    best_score = valid_score
 
 
 
