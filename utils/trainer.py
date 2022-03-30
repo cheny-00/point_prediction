@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from functools import partial
+from utils import eval_tools
 
 class Trainer:
 
@@ -38,7 +39,7 @@ class Trainer:
 
         train_process = partial(self.train_process, model=model)
 
-        train_loss = train_step = 0
+        total_mse = train_loss = train_step = 0
         log_interval, eval_interval = self.log_interval, self.eval_interval
 
         device = next(model.parameters()).device
@@ -49,7 +50,9 @@ class Trainer:
             log_start_time = time()
 
             for num_batch, data in enumerate(tqdm_train_iter):
-                loss = train_process(data=data)
+                logits, loss = train_process(data=data)
+                mse_loss = eval_tools.ade(logits, data['label'].to(device))
+                total_mse += mse_loss
                 train_loss += loss.float().item()
                 # TODO will we use fp16?
                 loss.backward()
@@ -62,10 +65,10 @@ class Trainer:
                     cur_loss = train_loss / log_interval
                     elapsed = time() - log_start_time
                     log_str = f"| epoch {i} steps {train_step} | {num_batch} batches | lr {self.optim.param_groups[0]['lr']:.3g} " \
-                              f"| {elapsed * 1000 / log_interval:5.2f} ms/batch | loss {cur_loss:5.6f}"
+                              f"| {elapsed * 1000 / log_interval:5.2f} ms/batch | mse_loss {total_mse / log_interval:5.6f}| loss {cur_loss:5.6f}"
                     self.logger(log_str, print_=False)
                     tqdm_train_iter.set_description(log_str, refresh=True)
-                    train_loss = 0
+                    total_mse = train_loss = 0
                     log_start_time = time()
             if (i + 1) % eval_interval == 0:
                 valid_score = self.eval_model(model, train_step) # TODO should we add early stop?
@@ -97,8 +100,8 @@ class LSTMModelTrainer(Trainer):
     def train_process(self, model, data, **kwargs):
 
         self.optim.zero_grad()
-        _, loss = model(data)
-        return loss
+        logits, loss = model(data)
+        return logits, loss
 
     def eval_model(self,
                    model,

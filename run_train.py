@@ -17,8 +17,9 @@ from model.model_table import *
 args = load_args()
 
 start_time = time.strftime('%Y%m%d-%H%M%S')
+st_date, st_time = start_time.split("-")
 work_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
-log_dir = os.path.join(work_dir, 'logs', args.proj_name, start_time)
+log_dir = os.path.join(work_dir, 'logs', args.proj_name, args.model_name, st_date, st_time)
 working_files  = ["run_train.py", "load_args.py", f"model/{args.model_name}_model.py", "utils/trainer.py"]
 working_files = list(map(lambda x: os.path.join(work_dir, x), working_files))
 logging = create_exp_dir(log_dir,
@@ -30,27 +31,26 @@ if torch.cuda.is_available() and not args.cuda:
     print("detected gpu is available but not used")
 
 
-save_path = os.path.join(work_dir, "save", "LSTM", start_time)
+save_path = os.path.join(work_dir, "save", args.model_name, st_date, st_time)
 if not os.path.exists(save_path) and not args.debug:
     os.makedirs(save_path)
 #############################################################################################
 ##  load dataset
 #############################################################################################
-val_split = [0.1, 0.2]
+val_split = [0.15, 0.1]
 
 
 dataset = LSTMDataset(data_path=args.data_path,
                          offset=args.offset)
 
 dataset.get_data()
-#print(dataset.dt)
+# print(dataset.dt)
 #if not os.path.exists(args.load_dataset_path):
 #    torch.save(dataset, args.data)
 dev_sampler, eval_sampler, train_sampler = randn_sampler(val_split,
                                                          len(dataset),
                                                          shuffle_dataset=True,
                                                          random_seed=args.seed)
-
 
 
 train_iter = DataLoader(dataset,
@@ -66,10 +66,10 @@ eval_iter = DataLoader(dataset,
 
 model = models[args.model_name]
 model_params = { 
-    "enc_hs": 512,
-    "dec_hs": 256,
-    "enc_hidden_size": 512,
-    "dec_hidden_size": 256,
+    "enc_hs": 128,
+    "dec_hs": 64,
+    "enc_hidden_size": 128,
+    "dec_hidden_size": 64,
     "drop_prob": args.dropout,
     "device": device,
     "is_qat": args.qat,

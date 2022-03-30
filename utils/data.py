@@ -3,82 +3,17 @@ import os
 import math
 import json
 
+import numpy as np
 import torch
 from tqdm import tqdm
 import pandas as pd
 import pickle
+from copy import deepcopy
 from torch.utils.data.dataset import Dataset
 
 
 n_prev = 40
-
-class LSTMSample:
-    def __init__(self, events, sequence_counter, count, jump):
-        self.angle = 0
-        self.avg_dt = 1000 / 240
-
-        self.x = []
-        self.y = []
-        self.time = []
-
-        for i in range(sequence_counter, sequence_counter + count):  # padding
-            if i >= jump - 1:
-                self.x.append(events[jump - 1][0])
-                self.y.append(events[jump - 1][1])
-
-                if i == sequence_counter:
-                    self.time.append(4)
-                else:
-                    self.time.append(events[jump - 1][3] - events[jump - 2][3])
-            else:
-                self.x.append(events[i][0])
-                self.y.append(events[i][1])
-                if i == sequence_counter:
-                    self.time.append(4)
-                else:
-                    self.time.append(events[i][3] - events[i - 1][3])
-
-    def derivate(self):
-        x_der = []
-        y_der = []
-        time_der = []
-        for i in range(len(self.x) - 1):
-            x_der.append(self.x[i + 1] - self.x[i])
-            y_der.append(self.y[i + 1] - self.y[i])
-            time_der.append(self.time[i + 1])
-        self.x = x_der
-        self.y = y_der
-        self.time = time_der
-
-    def getAngle(self, startIndex, endIndex):
-        myX = self.x[endIndex] - self.x[startIndex]
-        myY = self.y[endIndex] - self.y[startIndex]
-        return math.atan2(myX, myY)
-
-    def rotate(self, angle, originIndex):
-        self.rotation = angle
-
-        cs = math.cos(angle)
-        sn = math.sin(angle)
-        for i in range(len(self.x)):
-            myX = (self.x[i] - self.x[originIndex]) * cs - \
-                  (self.y[i] - self.y[originIndex]) * sn
-            myY = (self.x[i] - self.x[originIndex]) * sn + \
-                  (self.y[i] - self.y[originIndex]) * cs
-            self.x[i] = myX + self.x[originIndex]
-            self.y[i] = myY + self.y[originIndex]
-
-    def norm(self):
-        i = 1
-        new_x, new_y, new_t = [self.x[0]], [self.y[0]], [self.time[0]]
-        while i < len(self.x):
-            rate = self.avg_dt / self.time[i]
-            new_x.append(self.x[i - 1] + (self.x[i] - self.x[i - 1]) * rate)
-            new_y.append(self.y[i - 1] + (self.y[i] - self.y[i - 1]) * rate)
-            new_t.append(self.avg_dt)
-            i += 1
-        self.x, self.y, self.time = new_x, new_y, new_t
-
+TWO_PI = 2 * math.pi
 
 class LSTMDataset(Dataset):
 
@@ -86,11 +21,16 @@ class LSTMDataset(Dataset):
                  data_path,
                  offset):
 
+        self.targets = None
+        self.cum_time = list()
         self.data_path = data_path
         self.data = list()
         self.target = list()
         self.dt = list()
         self.offset = offset
+        self.normalize_event_count = 5
+        self.do_cum_time = True
+        self.do_sum_targets = True
 
 
     def __len__(self):
@@ -98,69 +38,84 @@ class LSTMDataset(Dataset):
 
 
     def __getitem__(self, idx):
-        return self.get_item(self.data[idx], self.target[idx], self.dt[idx])
+        return self.get_item(input=self.data[idx],
+                             label=self.target[idx],
+                             dt=self.dt[idx],
+                             cum_time=self.cum_time[idx],
+                             targets=self.targets[idx])
 
     def get_data(self):
-        events = self.read_data(self.data_path)
-        raw_sample = self.load_dataset(events, n_prev + 1 + self.offset)
-        self.data, self.target, self.dt = self.build_samples(raw_sample, self.offset)
+        # events shape will be (N, seq_len, features)
+        # 1. split event
+        # 2. normalize
+        events = self.read_data(self.data_path, offset=self.offset)
+        # open("/home/cy/workspace/npp/data/events", 'w')
+        raw_dataset = self.build_dataset(events)
+        self.data, self.target, self.dt, self.cum_time, self.targets = self.build_samples(raw_dataset, self.offset)
+
+    def build_dataset(self, events):
+        raw_dataset = list()
+        total_seq_len = n_prev + self.offset + 1
+        for event in tqdm(events):
+            n = event.shape[0]
+            
+            
+            while total_seq_len < n:
+                n_data = self.normalize(event[n-total_seq_len:n])
+                n -= 1
+                raw_dataset.append(n_data)
+        return raw_dataset
 
     @staticmethod
-    def get_item(data, target, dt):
+    def get_item(**kwargs):
         features = dict()
-        features['input'] = torch.tensor(data, dtype=torch.float32)
-        features['label'] = torch.tensor(target, dtype=torch.float32)
-        features['dt'] = torch.tensor(dt, dtype=torch.float32)
+        for k, v in kwargs.items():
+            if v is not None:
+                features[k] = torch.tensor(v, dtype=torch.float32)
 
         return features
 
+    def build_samples(self, raw_dataset, offset):
+
+        raw_dataset = np.array(raw_dataset) # shape will be (N, seq_len, features)
+        assert raw_dataset.shape[1] >= offset + n_prev, f"{raw_dataset.shape[1]} < {offset + n_prev}"
+        data = raw_dataset[:, :n_prev ,:]
+        label = np.sum(deepcopy(raw_dataset[:, n_prev:, :2]), axis=1)
+        targets = raw_dataset[:, n_prev:, :2]
+        label_dt = np.sum(deepcopy(raw_dataset[:, n_prev:, 3]), axis=1)
+        label_cum_time = np.cumsum(deepcopy(raw_dataset[:, n_prev:, 3]), axis=1)
+
+        return data, label, label_dt, label_cum_time, targets
+
+    def normalize(self, trace, add_noise=False):
+        normal_direction = trace[n_prev - 1,:2] - trace[n_prev - 1 - self.normalize_event_count, :2]
+        diff_trace = trace[1:] - trace[:-1]
+        dxy = diff_trace[:, :2]
+        dt = diff_trace[:, 3]
+        dp = diff_trace[:, 4]
+        do = diff_trace[:, 5:]
+
+        if add_noise:
+            dxy *= (1 + 0.10 * np.random.normal())
+        angle = math.atan2(normal_direction[0], normal_direction[1]) + math.radians(45)
+        cs = math.cos(angle)
+        sn = math.sin(angle)
+        dxy = np.dot(dxy, np.array([[cs, sn], [-sn, cs]]))
+        two_pi = 2 * np.pi
+        do = do - np.round(do / 2 * two_pi) * two_pi
+        feature = np.hstack([dxy, dt[:, None], dp[:, None], do])
+        # feature = np.hstack([dxy, dp[:, None], do])
+        return feature
+
+    # def norm_time(self, feature):
+    #     time_indent = 1000 / 240
+    #     dt = feature
+
+
+
 
     @staticmethod
-    def build_samples(raw_samples, offset):
-        data, target, dt = list(), list(), list()
-
-        for sample in raw_samples:
-            line = list()
-            for i in range(n_prev):
-                line.append([sample.x[i], sample.y[i], sample.time[i + offset]])
-            data.append(line)
-            x = y = t = 0
-            for i in range(offset):
-                x += sample.x[n_prev + i]
-                y += sample.y[n_prev + i]
-                t += sample.time[n_prev + i]
-            target.append([x, y])
-            dt.append(t)
-        return data, target, dt
-
-    @staticmethod
-    def load_dataset(raw_data, seq_len):
-        # return shape should be (N, seq_len, 3)
-        samples = list()
-        for i, event in enumerate(raw_data):
-            jump = i + seq_len + 1
-            for j in range(i, i + seq_len):
-                if j >= len(raw_data) or raw_data[j][4] != 2:
-                    jump = j
-                    break
-            if jump - i > n_prev + 1:
-                sample = LSTMSample(raw_data, i, seq_len, jump)
-                sample.angle = sample.getAngle(n_prev - 1, n_prev) + math.radians(45)
-                sample.rotate(sample.angle, n_prev)
-
-                sample.derivate()
-
-                same_time = 0
-                for a in range(len(sample.time)):
-                    if sample.time[a] < 1:
-                        same_time = 1
-                if same_time == 0:
-                    sample.norm()
-                    samples.append(sample)
-        return samples
-
-    @staticmethod
-    def read_data(data_path):
+    def read_data(data_path, offset=8):
         # return [x, y, angle(no need), time, action]
         header_name =  ["x", "y", "pressure", "x_tilt", "y_tilt", "total_tilt", "orientation", "pitch_angle", "scroll",
                         "pen_size", "pen_size_x", "pen_size_y", "pen_size_width", "pen_size_height" ,"timestamp"]
@@ -171,29 +126,23 @@ class LSTMDataset(Dataset):
         split_points = [-1] + raw_data[raw_data.y.isna()].x.index.tolist()
         split_points = [int(n) for n in split_points]
         events = list()
+        n_event = 0
         for i in tqdm(range(0, len(split_points) - 1, 2)):
             start, end = split_points[i] + 1, split_points[i + 1]
-            # if i == 50:
+            # if i == 250:
             #    break
+            # if len(events) == 100:
+            #     break
+            event = list()
             for idx, p in raw_data.iloc[start:end].iterrows():
-                action = 0 if idx == start else 1 if idx == end - 1 else 2
-                events.append([p.x, p.y, p.total_tilt, p.timestamp, action])
+                n_event += 1
+                event.append([p.x, p.y, p.total_tilt, p.timestamp, p.pressure, p.total_tilt, p.orientation])
+            if len(event) > offset + n_prev + 1:
+                events.append(np.array(event))
+        print(f"{len(events)} / {n_event}")
         return events
 
 
-def load_json_data(data_path):
-    data = json.load(open(data_path, "r"))
-    events = list()
-    for s in data:
-        points = s['mPoints']
-        start, end = 0, len(points)
-        for pos, point in enumerate(points):
-            if not "time" in point.keys():
-                print("Not found timestamp attribute")
-            action = 0 if pos == start else 1 if pos == end else 2
-            events.append([point['x'], point['y'], 0, point['time'],action])
-
-    return events
 
 def save_dataset(data, path):
     with open(path, 'wb') as f:
