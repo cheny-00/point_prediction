@@ -24,8 +24,6 @@ def aae(prev, pred, label):
     a = cal_dist(label, start)
     b = cal_dist(start, pred)
     c = cal_dist(label, pred)
-    if a * b == 0:
-        return torch.arccos(0)
     cos_c = (torch.pow(a, 2) + torch.pow(b, 2) + torch.pow(c, 2)) / (2 * a * b)
     return torch.mean(torch.arccos(torch.clip(cos_c, -0.99999, 0.99999)))
 

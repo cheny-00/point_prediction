@@ -34,7 +34,7 @@ class LSTMDataset(Dataset):
         self.do_cum_time = True
         self.do_sum_targets = True
         self.default_time_indent = 1000 / 240
-        self.time_diff_tolerance = 2.5
+        self.time_diff_tolerance = 2.8
         self.eval_step = eval_step
         self.use_n_data = use_n_data
         
@@ -66,9 +66,9 @@ class LSTMDataset(Dataset):
             n = event.shape[0]
             
             while total_seq_len < n:
-                n_data = self.normalize(event[n-total_seq_len:n])
+                n_data = event[n - total_seq_len:n]
                 n_data = self.smooth_diff(n_data)
-                n_data = self.norm_time(n_data)
+                n_data = self.normalize(n_data, do_norm_time=True)
                 n -= 1
                 if n_data is not None:
                     raw_dataset.append(n_data)
@@ -98,9 +98,13 @@ class LSTMDataset(Dataset):
 
         return data, label, label_dt, label_cum_time, targets
 
-    def normalize(self, trace, add_noise=False):
+    def normalize(self, trace, add_noise=False, do_norm_time=True):
+        if trace is None:
+            return trace
         normal_direction = trace[n_prev - 1,:2] - trace[n_prev - 1 - self.normalize_event_count, :2]
         diff_trace = trace[1:] - trace[:-1]
+        if do_norm_time:
+            diff_trace = self.norm_time(diff_trace)
         dxy = diff_trace[:, :2]
         dt = diff_trace[:, 2]
         dp = diff_trace[:, 3]
@@ -130,8 +134,8 @@ class LSTMDataset(Dataset):
         return norm_feature
     
     def smooth_diff(self, feature):
-
-        max_dt, min_dt = max(feature[:, 2]), min(feature[:, 2])
+        dt = feature[1:] - feature[:-1]
+        max_dt, min_dt = max(dt[:, 2]), min(dt[:, 2])
         if max_dt > self.default_time_indent + self.time_diff_tolerance or min_dt < self.default_time_indent -  self.time_diff_tolerance:
             return None
         return feature

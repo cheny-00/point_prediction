@@ -5,24 +5,14 @@ import torch.nn as nn
 class DepressedPredictor(nn.Module):
     def __init__(self,*args, **kwargs):
         super(DepressedPredictor, self).__init__()
-        if 'is_qat' in kwargs:
-            self.is_qat = kwargs['is_qat']
-        if 'device' in kwargs:
-            self.device = kwargs['device']
-        if 'enc_hidden_size' in kwargs:
-            self.enc_hidden_size = kwargs['enc_hidden_size']
-        if 'dec_hidden_size' in kwargs:
-            self.dec_hidden_size = kwargs['dec_hidden_size']
 
-        self.offset = kwargs['offset']
         self.squared_angle_weight = pow(1, 2)
-        self.time_weight = 1.0
-        self.fit_weight = 1.0
-        self.dist_tolerance = 2
-        self.angle_tolerance = 90 * math.pi / 180
-
-        self.scales = torch.linspace(1 / self.offset, 1, self.offset, dtype=torch.float32, device=self.device)
-
+        self.time_weight = 1.5
+        self.fit_weight = 4.0
+        self.dist_tolerance_strict = 3.0
+        self.dist_tolerance_loose = 1.5
+        self.angle_tolerance = 5 * math.pi / 180
+        self.hardness = 99.5
 
     def loss_fuc(self, prediction, projection, target, predicted_time, time_to_predict):
         # TODO set weights and tolerances
@@ -32,8 +22,12 @@ class DepressedPredictor(nn.Module):
                 self.squared_angle_weight * dist_loss + angle_loss + 1e-7)
         dist_loss_suppressed, angle_loss_suppressed, time_loss_suppressed = self.cal_loss(prediction, predicted_time,
                                                                                           target, time_to_predict)
-        dist_loss2 = torch.max(nn.functional.relu(dist_loss_suppressed - self.dist_tolerance))
+        dist_loss2 = 0.95 * torch.max(nn.functional.relu(dist_loss_suppressed - self.dist_tolerance_strict)) +\
+                     0.05 * torch.mean(nn.functional.relu(dist_loss_suppressed - self.dist_tolerance_strict / 3))
         angle_loss2 = torch.max(nn.functional.relu(angle_loss_suppressed - self.angle_tolerance))
+        angle_loss2 = torch.quantile(nn.functional.relu(torch.minimum((angle_loss_suppressed - math.pi / 6) * 3, dist_loss_suppressed - self.dist_tolerance_loose / 3)), self.hardness) +\
+            torch.mean(nn.functional.relu(torch.minimum((angle_loss_suppressed - math.pi / 6) * 3, dist_loss_suppressed - self.dist_tolerance_loose / 3)))
+
         time_loss = torch.mean(time_loss_suppressed)
         loss = self.fit_weight * fit_loss + dist_loss2 + angle_loss2 + self.time_weight * time_loss
         # print(f"dist_loss :{dist_loss}\t angle_loss :{angle_loss}\t fit_loss:{fit_loss}\t time_loss :{time_loss} \t ")
@@ -47,7 +41,7 @@ class DepressedPredictor(nn.Module):
 
     @staticmethod
     def cal_angle_loss(pred, target):
-        MIN_DISTANCE_TO_COMPARE_ANGLE = 0.5
+        MIN_DISTANCE_TO_COMPARE_ANGLE = 0.1
         raw_cosine = -nn.functional.cosine_similarity(pred, target, dim=-1)
         modified_cosine = torch.where(torch.logical_and(torch.norm(pred, dim=-1) > MIN_DISTANCE_TO_COMPARE_ANGLE,
                                                         torch.norm(target, dim=-1) > MIN_DISTANCE_TO_COMPARE_ANGLE),

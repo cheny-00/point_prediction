@@ -73,14 +73,14 @@ class Trainer:
             if (i + 1) % eval_interval == 0:
 
                 dev_start_time = time()
-                valid_score = self.eval_model(model) # TODO should we add early stop?
-                if type(valid_score) != dict():
-                    rmsd_loss, angle_loss, ade_loss, valid_score = 0, 0, 0, valid_score
+                scores = self.eval_model(model, train_step) # TODO should we add early stop?
+                if type(scores) != type(dict()):
+                    rmsd_loss, angle_loss, ade_loss, valid_score = 0, 0, 0, scores
                 else:
                     rmsd_loss, angle_loss, ade_loss, valid_score =\
-                        valid_score['rmsd_loss'], valid_score['angle_loss'], valid_score['ade_loss'], valid_score['valid_score']
+                        scores['rmsd_loss'], scores['angle_loss'], scores['ade_loss'], scores['valid_score']
                 log_str = f"| Eval step at {train_step} | speed time: {time() - dev_start_time} |" \
-                          f"| rmsd: {rmsd_loss:5.4f} | angle loss: {angle_loss:5.4f} | ade_loss: {ade_loss} | average valid loss: {valid_score:5.7f} | "
+                          f"| rmsd: {rmsd_loss:5.4f} | angle loss: {angle_loss:5.4f} | ade_loss: {ade_loss:5.4f} | average valid loss: {valid_score:5.7f} | "
                 self.logger('-' * 100 + "\n" + log_str + "\n" + '-' * 100, print_=True)
 
                 if (i + 1) > 150 and (valid_score < best_score or (i + 1) in [self.epochs// 3, self.epochs // 2, self.epochs]):
@@ -138,7 +138,8 @@ class DepressModelTrainer(Trainer):
 
         self.optim.zero_grad()
         logits, loss, pred_time = model(data)
-        norm_label = eval_tools.normalize_label(pred_time, data['targets'])
+        # norm_label = eval_tools.normalize_label(pred_time, data['targets'])
+        norm_label = data['targets'][:, -1, :]
         return logits, loss, norm_label
 
     def eval_model(self,
@@ -152,22 +153,23 @@ class DepressModelTrainer(Trainer):
         with torch.no_grad():
             for data in tqdm_dev_iter:
                 pred, loss, pred_time  = model(data)
-                norm_label = eval_tools.normalize_label(pred_time, data['targets'])
+                # norm_label = eval_tools.normalize_label(pred_time, data['targets'])
+                norm_label = data['targets'][:, -1, :]
 
                 rmsd_loss = eval_tools.rmsd(pred, norm_label)
                 ade_loss = eval_tools.ade(pred, norm_label)
-                angle_loss = eval_tools
+                angle_loss = eval_tools.aae(data['input'], pred, norm_label)
 
-                total_rmsd_loss += rmsd_loss
-                total_angle_loss += angle_loss
-                total_ade_loss += ade_loss
-                total_loss += loss
+                total_rmsd_loss += rmsd_loss.item()
+                total_angle_loss += angle_loss.item()
+                total_ade_loss += ade_loss.item()
+                total_loss += loss.item()
 
         model.train()
         ret = {
             'rmsd_loss': total_rmsd_loss / n,
             'angle_loss': total_angle_loss / n,
             'ade_loss': total_ade_loss / n,
-            'valid_score': loss / n
+            'valid_score': total_loss / n
         }
         return ret

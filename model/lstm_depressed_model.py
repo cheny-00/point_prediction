@@ -1,28 +1,43 @@
 import torch
 import torch.nn as nn
-from depressed_model import DepressedPredictor
+from .depressed_model import DepressedPredictor
 
 class LSTMDepressedPointPredict(DepressedPredictor):
-    def __init__(self, enc_hidden_size, dec_hidden_size, drop_prob, **kwargs):
+    def __init__(self, **kwargs):
 
         super(LSTMDepressedPointPredict, self).__init__()
 
+        if 'is_qat' in kwargs:
+            self.is_qat = kwargs['is_qat']
+        else:
+            self.is_qat = False
+        if 'device' in kwargs:
+            self.device = kwargs['device']
+        else:
+            self.device = 'cpu'
+        self.enc_hidden_size = kwargs['enc_hidden_size']
+        self.dec_hidden_size = kwargs['dec_hidden_size']
+        self.drop_prob = kwargs['drop_prob']
+
+        self.offset = kwargs['offset']
+        self.scales = torch.linspace(1 / self.offset, 1, self.offset, dtype=torch.float32, device=self.device)
+
         self.encoder = nn.LSTM(input_size=5,
-                               hidden_size=enc_hidden_size,
+                               hidden_size=self.enc_hidden_size,
                                num_layers=1,
                                batch_first=True,
                                bias=True)
 
-        self.drop = nn.Dropout(drop_prob)
+        self.drop = nn.Dropout(self.drop_prob)
 
-        self.decoder = nn.LSTM(input_size=enc_hidden_size,
-                               hidden_size=dec_hidden_size,
+        self.decoder = nn.LSTM(input_size=self.enc_hidden_size,
+                               hidden_size=self.dec_hidden_size,
                                num_layers=1,
                                batch_first=True,
                                bias=True)
 
-        self.va_ffc = nn.Linear(dec_hidden_size, 4)
-        self.time_prediction = nn.Sequential(nn.Linear(dec_hidden_size, 1),
+        self.va_ffc = nn.Linear(self.dec_hidden_size, 4)
+        self.time_prediction = nn.Sequential(nn.Linear(self.dec_hidden_size, 1),
                                              nn.Sigmoid())
 
     def forward(self,

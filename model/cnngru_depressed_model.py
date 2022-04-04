@@ -1,11 +1,25 @@
 import torch
 import torch.nn as nn
-from depressed_model import DepressedPredictor
+from .depressed_model import DepressedPredictor
 
 class CNNGRUDepressedPointPredict(DepressedPredictor):
     def __init__(self, **kwargs):
 
         super(CNNGRUDepressedPointPredict, self).__init__()
+
+        if 'is_qat' in kwargs:
+            self.is_qat = kwargs['is_qat']
+        else:
+            self.is_qat = False
+        if 'device' in kwargs:
+            self.device = kwargs['device']
+        else:
+            self.device = 'cpu'
+        self.enc_hidden_size = kwargs['enc_hidden_size']
+        self.dec_hidden_size = kwargs['dec_hidden_size']
+
+        self.offset = kwargs['offset']
+        self.scales = torch.linspace(1 / self.offset, 1, self.offset, dtype=torch.float32, device=self.device)
 
         dec_hidden_size = 32
 
