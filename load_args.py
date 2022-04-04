@@ -25,6 +25,7 @@ def load_args():
     parser.add_argument("--rank", type=str, default="0", help="gpu rank")
     parser.add_argument("--qat", action="store_true", help="qat")
     parser.add_argument("--fp8", action="store_true", help="float 8bit")
+    parser.add_argument("--n_data", type=int, default=-1, help="numbers of using data, -1 for using all data")
     args = parser.parse_args()
 
     return args

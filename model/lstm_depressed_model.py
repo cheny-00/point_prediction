@@ -7,14 +7,15 @@ class LSTMDepressedPointPredict(nn.Module):
 
         super(LSTMDepressedPointPredict, self).__init__()
 
-        self.set_weights()
 
         self.is_qat = is_qat
         self.device = device
         self.enc_hidden_size = enc_hidden_size
         self.dec_hidden_size = dec_hidden_size
+        self.offset = kwargs['offset']
+        self.set_weights()
 
-        self.encoder = nn.LSTM(input_size=6,
+        self.encoder = nn.LSTM(input_size=5,
                                hidden_size=enc_hidden_size,
                                num_layers=1,
                                batch_first=True,
@@ -37,13 +38,15 @@ class LSTMDepressedPointPredict(nn.Module):
         self.fit_weight = 1.0
         self.dist_tolerance = 2
         self.angle_tolerance = 90 * math.pi / 180
+        self.scales = torch.linspace(1 / self.offset, 1, self.offset, dtype=torch.float32, device=self.device)
+        
 
     def forward(self,
                 inp):
 
         # input data shape should be (batch_size, 10, 3), same as their paper
         inp_tensor = inp['input'].to(self.device)
-        time_to_predict = torch.cumsum(torch.ones_like(inp['cum_time'].to(self.device)) * (1000 / 24), dim=-1)
+        time_to_predict = torch.tile(self.scales, (len(inp_tensor), 1))
 
         out, hc = self.encoder(inp_tensor)
         out = self.drop(out)
@@ -60,7 +63,7 @@ class LSTMDepressedPointPredict(nn.Module):
         projection = torch.matmul(powers[:, :, None, :], polynomial[:, None, :, :]).squeeze(-2)
 
         loss = self.loss_fuc(prediction, projection, inp['targets'].to(self.device), predicted_time, time_to_predict)
-        return prediction, loss
+        return prediction, loss, predicted_time
 
 
 
@@ -78,8 +81,6 @@ class LSTMDepressedPointPredict(nn.Module):
         # print(f"dist_loss_suppressed:{torch.max(dist_loss_suppressed)} \t angle_loss_suppressed:{torch.max(angle_loss_suppressed)} \t time_loss_suppressed:{torch.max(time_loss_suppressed)}")
         # print(f"angle_loss2:{angle_loss2} \t dist_loss2: {dist_loss2}")
         return loss
-
-
 
 
     @staticmethod

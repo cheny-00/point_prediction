@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from load_args import load_args
 from utils.data import LSTMDataset
 from utils.utils import create_exp_dir, randn_sampler
-from utils.trainer import LSTMModelTrainer
+from utils.trainer import LSTMModelTrainer, DepressModelTrainer
 from model.model_table import *
 
 #############################################################################################
@@ -41,7 +41,8 @@ val_split = [0.15, 0.1]
 
 
 dataset = LSTMDataset(data_path=args.data_path,
-                         offset=args.offset)
+                      offset=args.offset,
+                      use_n_data=args.n_data)
 
 dataset.get_data()
 # print(dataset.dt)
@@ -109,6 +110,11 @@ if args.qat:
 #############################################################################################
 ##  train model
 #############################################################################################
+if 'depressed' in args.model_name:
+    ModelTrainer = DepressModelTrainer
+else:
+    ModelTrainer = LSTMModelTrainer
+
 
 trainer_params = {
     "epochs": args.epochs,
@@ -123,7 +129,7 @@ trainer_params = {
     "is_qat": args.qat
 }
 
-model_trainer = LSTMModelTrainer(**trainer_params)
+model_trainer = ModelTrainer(**trainer_params)
 
 model_trainer.train(model, None)
 
