@@ -159,6 +159,8 @@ class DepressModelTrainer(Trainer):
                 angle_loss = eval_tools
 
                 total_rmsd_loss += rmsd_loss
+                total_angle_loss += angle_loss
+                total_ade_loss += ade_loss
                 total_loss += loss
 
         model.train()
