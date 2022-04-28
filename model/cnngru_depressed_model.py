@@ -23,9 +23,9 @@ class CNNGRUDepressedPointPredict(DepressedPredictor):
 
         dec_hidden_size = 32
 
-        self.conv_layers = nn.Sequential(nn.Conv1d(25, 32, 7, padding='same'),
+        self.conv_layers = nn.Sequential(nn.Conv1d(25, 32, 7, padding=3),
                                          nn.ReLU(),
-                                         nn.Conv1d(32, 64, 3, padding='same'),
+                                         nn.Conv1d(32, 64, 3, padding=1),
                                          nn.ReLU(),
                                          nn.GRU(input_size=5,
                                                 hidden_size=32,
@@ -55,5 +55,5 @@ class CNNGRUDepressedPointPredict(DepressedPredictor):
         powers = torch.stack((time_to_predict, torch.square(time_to_predict)), -1)
         projection = torch.matmul(powers[:, :, None, :], polynomial[:, None, :, :]).squeeze(-2)
 
-        loss = self.loss_fuc(prediction, projection, inp['targets'].to(self.device), predicted_time, time_to_predict)
-        return prediction, loss, predicted_time
+        loss, loss_details = self.loss_fuc(prediction, projection, inp['targets'].to(self.device), predicted_time, time_to_predict)
+        return prediction, loss, loss_details

@@ -20,7 +20,7 @@ start_time = time.strftime('%Y%m%d-%H%M%S')
 st_date, st_time = start_time.split("-")
 work_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
 log_dir = os.path.join(work_dir, 'logs', args.proj_name, args.model_name, st_date, st_time)
-working_files  = ["run_train.py", "load_args.py", f"model/{args.model_name}_model.py", "utils/trainer.py"]
+working_files  = ["run_train.py", "load_args.py", f"model/{args.model_name}_model.py", "utils/trainer.py", "model/depressed_model.py"]
 working_files = list(map(lambda x: os.path.join(work_dir, x), working_files))
 logging = create_exp_dir(log_dir,
                          scripts_to_save=working_files,
@@ -79,7 +79,8 @@ model_params = {
 model = model(**model_params)
 model.to(device)
 
-optim = torch.optim.Adam(model.parameters(), lr=args.lr)
+optim = torch.optim.AdamW(model.parameters(), lr=args.lr)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=60, eta_min= args.lr / 100)
 
 #############################################################################################
 ##  loading model
@@ -126,7 +127,8 @@ trainer_params = {
     "eval_interval": args.eval_interval,
     "optim": optim,
     "save_path": save_path,
-    "is_qat": args.qat
+    "is_qat": args.qat,
+    "scheduler": scheduler
 }
 
 model_trainer = ModelTrainer(**trainer_params)
@@ -137,20 +139,15 @@ model_trainer.train(model, None)
 ##  evaluate model
 #############################################################################################
 
-model.eval()
-tqdm_eval_iter = tqdm(eval_iter)
-total_eval_score = 0
-eval_start_time = time.time()
-with torch.no_grad():
-    for data in tqdm_eval_iter:
-        _, eval_score = model(data)
-        total_eval_score += eval_score
+eval_start_time = time()
+scores = model_trainer.eval_step(model, eval_iter)
 
-eval_avg_score = total_eval_score / len(tqdm_eval_iter)
-eval_log_str  = f"| Final Eval | speed time: {time.time() - eval_start_time} |" \
-                f"| average eval loss: {eval_avg_score} | "
+rmsd_loss, angle_loss, final_score =\
+    scores['rmsd_loss'], scores['angle_loss'], scores['valid_score']
+eval_log_str = f"| Final Eval | speed time: {time() - eval_start_time} " \
+          f"| rmsd: {rmsd_loss:5.4f} | angle loss: {angle_loss:5.4f} |  average valid loss: {final_score:5.7f} | "
 
-logging('-' * 100 + "\n" + eval_log_str + "\n" + '-' * 100, print_=True)
+logging('-' * len(eval_log_str) + "\n" + eval_log_str + "\n" + '-' * len(eval_log_str), print_=True)
 
 
 #############################################################################################
@@ -163,7 +160,7 @@ if args.qat:
 save_params = {
     "model_state_dict": model.state_dict(),
     "optim_state_dict": optim.state_dict(),
-    "score": eval_avg_score
+    "score": final_score
 }
 torch.save(save_params,
            os.path.join(save_path, "LSTM.pt"))

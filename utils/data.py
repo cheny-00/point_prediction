@@ -21,7 +21,8 @@ class LSTMDataset(Dataset):
                  data_path,
                  offset,
                  use_n_data,
-                 eval_step=False):
+                 eval_step=False,
+                 save_data_path=None):
 
         self.targets = None
         self.cum_time = list()
@@ -34,9 +35,12 @@ class LSTMDataset(Dataset):
         self.do_cum_time = True
         self.do_sum_targets = True
         self.default_time_indent = 1000 / 240
-        self.time_diff_tolerance = 2.8
+        self.time_diff_tolerance = 3.5
         self.eval_step = eval_step
         self.use_n_data = use_n_data
+        if save_data_path is None:
+            save_data_path = "/home/cy/workspace/npp/data/raw_dataset.npy"
+        self.save_data_path = save_data_path
         
 
     def __len__(self):
@@ -54,21 +58,27 @@ class LSTMDataset(Dataset):
         # events shape will be (N, seq_len, features)
         # 1. split event
         # 2. normalize
-        events = self.read_data(self.data_path, use_n_data=self.use_n_data, offset=self.offset)
-        # open("/home/cy/workspace/npp/data/events", 'w')
-        raw_dataset = self.build_dataset(events)
+        if not os.path.exists(self.save_data_path):
+            events = self.read_data(self.data_path, use_n_data=self.use_n_data, offset=self.offset)
+            raw_dataset = self.build_dataset(events)
+            with open(self.save_data_path, 'wb') as np_f:
+                np.save(np_f, raw_dataset)
+        else:
+            raw_dataset = np.load(self.save_data_path)
+        
         self.data, self.target, self.dt, self.cum_time, self.targets = self.build_samples(raw_dataset, self.offset)
 
     def build_dataset(self, events):
         raw_dataset = list()
-        total_seq_len = n_prev + self.offset + 1
+        total_seq_len = n_prev + self.offset + 2
         for event in tqdm(events):
             n = event.shape[0]
             
             while total_seq_len < n:
                 n_data = event[n - total_seq_len:n]
-                n_data = self.smooth_diff(n_data)
-                n_data = self.normalize(n_data, do_norm_time=True)
+                # n_data = self.smooth_diff(n_data)
+                n_data = self.linear_interpolation(n_data)
+                n_data = self.normalize(n_data)
                 n -= 1
                 if n_data is not None:
                     raw_dataset.append(n_data)
@@ -98,13 +108,13 @@ class LSTMDataset(Dataset):
 
         return data, label, label_dt, label_cum_time, targets
 
-    def normalize(self, trace, add_noise=False, do_norm_time=True):
+    def normalize(self, trace, add_noise=False):
         if trace is None:
             return trace
         normal_direction = trace[n_prev - 1,:2] - trace[n_prev - 1 - self.normalize_event_count, :2]
         diff_trace = trace[1:] - trace[:-1]
-        if do_norm_time:
-            diff_trace = self.norm_time(diff_trace)
+        # print("before", diff_trace)
+        # print("before", diff_trace)
         dxy = diff_trace[:, :2]
         dt = diff_trace[:, 2]
         dp = diff_trace[:, 3]
@@ -117,21 +127,32 @@ class LSTMDataset(Dataset):
         sn = math.sin(angle)
         dxy = np.dot(dxy, np.array([[cs, sn], [-sn, cs]]))
         two_pi = 2 * np.pi
-        do = do - np.round(do / 2 * two_pi) * two_pi
-        feature = np.hstack([dxy, dt[:, None], dp[:, None], do])
+        do = do - np.round(do / two_pi) * two_pi
+        # feature = np.hstack([dxy, dt[:, None], dp[:, None], do])
 
-        # feature = np.hstack([dxy, dp[:, None], do])
+        feature = np.hstack([dxy, dp[:, None], do])
         return feature
-
-    def norm_time(self, feature):
+    
+    def linear_interpolation(self, feature):
         if feature is None:
-            return feature
-        last_feature = deepcopy(np.append(np.array([0 for _ in range(feature.shape[-1])])[None, :], feature[:-1, :], axis=0))
-        alpha =  (self.default_time_indent / feature[:, 2])[:, None]
-        beta = 1 - alpha
-        norm_feature = alpha * feature + beta * last_feature
-        norm_feature = np.append(norm_feature[:, :2], norm_feature[:, 3:], axis=-1) # remove time
+            return None
+        n, i = feature.shape[0], 0
+        t_0 = feature[0, 2]
+        norm_feature = list()
+        while i < n - 1:
+            last_t = feature[i, 2] - t_0
+            next_t = feature[i + 1, 2] - t_0
+            if next_t - last_t == 0:
+                return None
+            alpha = (next_t - self.default_time_indent * (i + 1)) / (next_t - last_t)
+            beta = 1 - alpha
+            norm_feature.append(feature[i] * alpha + feature[i + 1] * beta)
+            i += 1
+        norm_feature = np.array(norm_feature)
+        norm_feature[:, 2] = norm_feature[:, 2] - norm_feature[0, 2]
+        # print(np.array(norm_feature).shape)
         return norm_feature
+
     
     def smooth_diff(self, feature):
         dt = feature[1:] - feature[:-1]
@@ -157,13 +178,13 @@ class LSTMDataset(Dataset):
         n_event = 0
         for i in tqdm(range(0, len(split_points) - 1, 2)):
             start, end = split_points[i] + 1, split_points[i + 1]
+            n_event += 1
             if len(events) == use_n_data:
                 break
             event = list()
             for idx, p in raw_data.iloc[start:end].iterrows():
-                n_event += 1
                 event.append([p.x, p.y, p.timestamp, p.pressure, p.total_tilt, p.orientation])
-            if len(event) > offset + n_prev + 1:
+            if len(event) > offset + n_prev + 2:
                 events.append(np.array(event))
         print(f"{len(events)} / {n_event}")
         return events

@@ -18,6 +18,7 @@ class LSTMDepressedPointPredict(DepressedPredictor):
         self.enc_hidden_size = kwargs['enc_hidden_size']
         self.dec_hidden_size = kwargs['dec_hidden_size']
         self.drop_prob = kwargs['drop_prob']
+        self.drop_prob = 0.55
 
         self.offset = kwargs['offset']
         self.scales = torch.linspace(1 / self.offset, 1, self.offset, dtype=torch.float32, device=self.device)
@@ -55,11 +56,11 @@ class LSTMDepressedPointPredict(DepressedPredictor):
         polynomial = self.va_ffc(out[:, -1]).reshape(-1, 2, 2)
         predicted_time = self.time_prediction(out[:, -1])
 
-
         powers = torch.cat((predicted_time, torch.square(predicted_time)), -1)
         prediction = torch.matmul(powers[:, None, :], polynomial).squeeze(1)
         powers = torch.stack((time_to_predict, torch.square(time_to_predict)), -1)
         projection = torch.matmul(powers[:, :, None, :], polynomial[:, None, :, :]).squeeze(-2)
+        # print(f"predicted_time:{torch.mean(predicted_time)}")
 
-        loss = self.loss_fuc(prediction, projection, inp['targets'].to(self.device), predicted_time, time_to_predict)
-        return prediction, loss, predicted_time
+        loss, loss_details = self.loss_fuc(prediction, projection, inp['targets'].to(self.device), predicted_time, time_to_predict)
+        return prediction, loss, loss_details
